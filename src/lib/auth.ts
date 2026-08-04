@@ -71,7 +71,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   pages: {
     signIn: "/login",
-    error: "/login",
   },
-  secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET || "ipu-attendance-tracker-super-secret-key-2026",
+  secret: process.env.NEXTAUTH_SECRET,
 });
