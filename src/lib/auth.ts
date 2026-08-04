@@ -33,18 +33,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    async signIn({ user, account }) {
+    async signIn({ user }) {
       if (!user.email) return false;
 
       const normalizedEmail = user.email.toLowerCase().trim();
 
-      // Check if user already exists by email (whether created by password or Google)
       let dbUser = await prisma.user.findUnique({
         where: { email: normalizedEmail },
       });
 
       if (!dbUser) {
-        // Create new user for Google OAuth login
         dbUser = await prisma.user.create({
           data: {
             email: normalizedEmail,
@@ -53,7 +51,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         });
       }
 
-      // Ensure user.id is set to DB user ID so JWT callback receives the unified DB id
       user.id = dbUser.id;
       return true;
     },
@@ -74,6 +71,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   pages: {
     signIn: "/login",
+    error: "/login",
   },
-  secret: process.env.NEXTAUTH_SECRET,
+  secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET || "ipu-attendance-tracker-super-secret-key-2026",
 });
