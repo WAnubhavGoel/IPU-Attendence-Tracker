@@ -93,7 +93,7 @@ export default function LoginPage() {
               background: "rgba(99,102,241,0.15)", color: "#818cf8",
               border: "1px solid rgba(99,102,241,0.3)",
               padding: "3px 10px", borderRadius: 100, fontSize: "0.72rem", fontWeight: 700,
-            }}>50% Mandatory Rule</span>
+            }}>Attendance Tracker</span>
           </div>
           <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: 8 }}>
             Track attendance. Stay safe from shortage.

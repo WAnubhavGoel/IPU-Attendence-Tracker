@@ -186,7 +186,7 @@ export default function AnalyticsPage() {
         <h1 style={{ fontSize: "1.5rem", fontWeight: 800, marginBottom: 4 }}>
           <span className="grad-text">Attendance</span> Analytics
         </h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>IPU 50% Mandatory Rule Tracker</p>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Attendance Analytics & Bunk Tracker</p>
       </div>
 
       {/* Empty state */}

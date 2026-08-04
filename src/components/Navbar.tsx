@@ -13,7 +13,7 @@ export default function Navbar() {
 
   const navItems = [
     { href: "/dashboard", label: "Daily Check-in", icon: Calendar },
-    { href: "/analytics", label: "Analytics & 50% Rule", icon: BarChart3 },
+    { href: "/analytics", label: "Analytics", icon: BarChart3 },
     { href: "/timetable/setup", label: "Manage Timetable", icon: Upload },
   ];
 
@@ -29,7 +29,7 @@ export default function Navbar() {
               IPU Tracker
             </span>
             <span className="ml-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-xs font-semibold text-indigo-300">
-              50% Rule
+              Attendance Tracker
             </span>
           </div>
         </Link>
