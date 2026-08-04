@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 
 // SVG Icons
 function DashIcon({ active }: { active: boolean }) {
   return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={active ? "#6366f1" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={active ? "#6366f1" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="3" width="7" height="9" rx="1.5" />
       <rect x="14" y="3" width="7" height="5" rx="1.5" />
       <rect x="14" y="12" width="7" height="9" rx="1.5" />
@@ -18,7 +18,7 @@ function DashIcon({ active }: { active: boolean }) {
 
 function ChartIcon({ active }: { active: boolean }) {
   return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={active ? "#6366f1" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={active ? "#6366f1" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <line x1="18" y1="20" x2="18" y2="10" />
       <line x1="12" y1="20" x2="12" y2="4" />
       <line x1="6"  y1="20" x2="6"  y2="14" />
@@ -28,7 +28,7 @@ function ChartIcon({ active }: { active: boolean }) {
 
 function CalIcon({ active }: { active: boolean }) {
   return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={active ? "#6366f1" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={active ? "#6366f1" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="4" width="18" height="18" rx="3" />
       <line x1="16" y1="2" x2="16" y2="6" />
       <line x1="8"  y1="2" x2="8"  y2="6" />
@@ -45,8 +45,19 @@ function BookIcon() {
   );
 }
 
+function LogOutIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
+  );
+}
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { data: session } = useSession();
 
   const isAuthPage = pathname === "/login";
@@ -55,6 +66,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const initials = session.user?.name
     ? session.user.name.split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0, 2)
     : session.user?.email?.[0]?.toUpperCase() || "?";
+
+  const handleSignOut = async () => {
+    await signOut({ redirect: false });
+    window.location.href = "/login";
+  };
 
   const navItems = [
     { href: "/dashboard",       label: "Today",     Icon: DashIcon },
@@ -73,7 +89,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <span className="logo-name">IPU Tracker</span>
         </Link>
 
-        <div className="top-bar-right">
+        <div className="top-bar-right" style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {/* Desktop nav links */}
           <nav className="desktop-nav" style={{ gap: 4 }}>
             {navItems.map(({ href, label, Icon }) => {
@@ -98,12 +114,33 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             })}
           </nav>
 
-          <button
+          {/* User Badge */}
+          <div
             className="avatar-btn"
-            onClick={() => signOut({ callbackUrl: "/login" })}
-            title={`${session.user?.name || session.user?.email} — Click to sign out`}
+            style={{ cursor: "default" }}
+            title={session.user?.email || session.user?.name || "Logged in"}
           >
             {initials}
+          </div>
+
+          {/* Explicit Sign Out / Log Out Button */}
+          <button
+            onClick={handleSignOut}
+            className="btn btn-secondary btn-sm"
+            style={{
+              padding: "6px 12px",
+              fontSize: "0.78rem",
+              fontWeight: 600,
+              gap: 6,
+              display: "flex",
+              alignItems: "center",
+              borderColor: "rgba(239,68,68,0.3)",
+              color: "#f87171",
+              background: "rgba(239,68,68,0.08)",
+            }}
+          >
+            <LogOutIcon />
+            <span>Log Out</span>
           </button>
         </div>
       </header>
@@ -125,6 +162,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </Link>
           );
         })}
+        <button
+          onClick={handleSignOut}
+          className="bottom-nav-item"
+          style={{ background: "transparent", border: "none", color: "#f87171", cursor: "pointer" }}
+        >
+          <LogOutIcon />
+          <span>Log Out</span>
+        </button>
       </nav>
     </div>
   );
