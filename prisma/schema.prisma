@@ -1,0 +1,88 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum ClassType {
+  LECTURE
+  LAB
+}
+
+model User {
+  id               String          @id @default(cuid())
+  name             String?
+  email            String          @unique
+  password         String?         // Optional for OAuth users
+  sessionStartDate DateTime?       @db.Date // Session/classes start date
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  timetableSlots   TimetableSlot[]
+  attendanceLogs   AttendanceLog[]
+  subjectStats     SubjectStat[]
+}
+
+// Stores weekly Monday - Sunday timetable structure
+model TimetableSlot {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dayOfWeek   DayOfWeek
+  subjectName String
+  type        ClassType @default(LECTURE) // LECTURE (theory class) vs LAB
+  count       Int       @default(1)       // Scheduled class count (e.g. 2 for TOC, 2 for TOC Lab)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId, dayOfWeek])
+}
+
+// Stores daily attendance check-in records
+model AttendanceLog {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date            DateTime  @db.Date
+  subjectName     String
+  type            ClassType @default(LECTURE)
+  
+  scheduledCount  Int       // Default count from timetable
+  heldCount       Int       // Classes actually conducted today (0 if teacher absent)
+  attendedCount   Int       // Classes student actually attended
+  isTeacherAbsent Boolean   @default(false) // Toggle: if teacher absent, heldCount = 0
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([userId, date, subjectName, type])
+}
+
+// Stores cumulative attendance stats per subject for instant analytics & 50% rule calculation
+model SubjectStat {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subjectName   String
+  type          ClassType @default(LECTURE) // LECTURE vs LAB
+  
+  totalHeld     Int       @default(0) // Total conducted till date
+  totalAttended Int       @default(0) // Total attended till date
+  
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([userId, subjectName, type])
+}
