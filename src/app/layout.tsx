@@ -3,12 +3,13 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import Providers from "@/components/Providers";
 import AppShell from "@/components/AppShell";
+import { Analytics } from "@vercel/analytics/next";
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "IPU Attendance Tracker | Never Miss 50%",
-  description: "Track college attendance for the mandatory 50% rule. Smart timetable upload, daily check-ins, teacher absence handling, and bunk margin calculator.",
+  title: "IPU Attendance Tracker",
+  description: "Track college attendance, theory lectures, lab practicals, teacher absences, and bunk margins.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -24,6 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Providers>
           <AppShell>{children}</AppShell>
         </Providers>
+        <Analytics />
       </body>
     </html>
   );
