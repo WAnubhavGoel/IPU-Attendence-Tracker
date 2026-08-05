@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 
@@ -18,9 +18,20 @@ function formatDate(ds: string) {
   return new Date(y,m-1,d).toLocaleDateString("en-IN", { weekday:"long", year:"numeric", month:"long", day:"numeric" });
 }
 
+function isWeekend(ds: string) {
+  const [y,m,d] = ds.split("-").map(Number);
+  const dow = new Date(y,m-1,d).getDay();
+  return dow === 0 || dow === 6;
+}
+
 export default function DashboardPage() {
   const { data: session } = useSession();
-  const [date] = useState(getTodayStr);
+  const todayStr = getTodayStr();
+
+  // Active date being viewed/edited
+  const [activeDate, setActiveDate] = useState(todayStr);
+  const isToday = activeDate === todayStr;
+
   const [scheduledSlots, setScheduledSlots] = useState<ScheduledSlot[]>([]);
   const [formState, setFormState] = useState<Record<string, FormEntry>>({});
   const [isHoliday, setIsHoliday] = useState(false);
@@ -30,13 +41,22 @@ export default function DashboardPage() {
   const [hasTimetable, setHasTimetable] = useState(true);
   const [editMode, setEditMode] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-
   const [sessionStartDate, setSessionStartDate] = useState<string | null>(null);
   const [isBeforeSessionStart, setIsBeforeSessionStart] = useState(false);
 
-  useEffect(() => {
+  // Past day picker
+  const [showPastPicker, setShowPastPicker] = useState(false);
+  const [pastDateInput, setPastDateInput] = useState("");
+
+  const loadDate = useCallback((dateStr: string) => {
+    setLoading(true);
+    setSubmitted(false);
+    setEditMode(false);
+    setSaveSuccess(false);
+    setIsHoliday(false);
+
     Promise.all([
-      fetch(`/api/attendance?date=${date}`).then(r => r.json()),
+      fetch(`/api/attendance?date=${dateStr}`).then(r => r.json()),
       fetch("/api/timetable").then(r => r.json()),
     ]).then(([attData, ttData]) => {
       if (!ttData.hasTimetable) { setHasTimetable(false); setLoading(false); return; }
@@ -59,7 +79,9 @@ export default function DashboardPage() {
       if (attData.alreadySubmitted) setSubmitted(true);
       setLoading(false);
     }).catch(() => setLoading(false));
-  }, [date]);
+  }, []);
+
+  useEffect(() => { loadDate(activeDate); }, [activeDate, loadDate]);
 
   const updateForm = (key: string, field: keyof FormEntry, val: number | boolean) => {
     setFormState(prev => {
@@ -80,7 +102,7 @@ export default function DashboardPage() {
       const res = await fetch("/api/attendance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date, isFullDayHoliday: isHoliday, logs }),
+        body: JSON.stringify({ date: activeDate, isFullDayHoliday: isHoliday, logs }),
       });
       if (!res.ok) throw new Error();
       setSubmitted(true); setEditMode(false); setSaveSuccess(true);
@@ -90,6 +112,30 @@ export default function DashboardPage() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleGoToPastDate = () => {
+    if (!pastDateInput) return;
+    if (isWeekend(pastDateInput)) {
+      alert("Weekends (Saturday & Sunday) don't have classes. Pick a weekday.");
+      return;
+    }
+    if (sessionStartDate && pastDateInput < sessionStartDate) {
+      alert(`You can only edit attendance from your session start date (${sessionStartDate}) onwards.`);
+      return;
+    }
+    if (pastDateInput >= todayStr) {
+      alert("You can only edit past days here. Today's attendance is at the top.");
+      return;
+    }
+    setShowPastPicker(false);
+    setActiveDate(pastDateInput);
+  };
+
+  const switchToToday = () => {
+    setActiveDate(todayStr);
+    setShowPastPicker(false);
+    setPastDateInput("");
   };
 
   if (loading) return (
@@ -125,10 +171,11 @@ export default function DashboardPage() {
       <div style={{ marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
           <span style={{
-            background: "rgba(99,102,241,0.15)", color: "#818cf8",
-            border: "1px solid rgba(99,102,241,0.3)",
+            background: isToday ? "rgba(99,102,241,0.15)" : "rgba(245,158,11,0.15)",
+            color: isToday ? "#818cf8" : "#f59e0b",
+            border: `1px solid ${isToday ? "rgba(99,102,241,0.3)" : "rgba(245,158,11,0.3)"}`,
             padding: "2px 10px", borderRadius: 100, fontSize: "0.7rem", fontWeight: 700,
-          }}>TODAY</span>
+          }}>{isToday ? "TODAY" : "PAST DAY"}</span>
 
           {sessionStartDate && (
             <Link href="/timetable/setup" style={{ color: "var(--text-muted)", fontSize: "0.75rem", textDecoration: "none", display: "flex", alignItems: "center", gap: 4 }}>
@@ -137,10 +184,63 @@ export default function DashboardPage() {
           )}
         </div>
 
-        <h1 style={{ fontSize: "1.3rem", fontWeight: 800, lineHeight: 1.2 }}>{formatDate(date)}</h1>
+        <h1 style={{ fontSize: "1.3rem", fontWeight: 800, lineHeight: 1.2 }}>{formatDate(activeDate)}</h1>
         <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", marginTop: 4 }}>
-          Hi {session?.user?.name?.split(" ")[0] || "there"} 👋 Log your classes below.
+          {isToday
+            ? `Hi ${session?.user?.name?.split(" ")[0] || "there"} 👋 Log your classes below.`
+            : "Editing past day attendance — changes will update your stats instantly."}
         </p>
+
+        {/* Switch between today / past day */}
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          {!isToday && (
+            <button
+              onClick={switchToToday}
+              className="btn btn-secondary btn-sm"
+              style={{ fontSize: "0.78rem" }}
+            >
+              ← Back to Today
+            </button>
+          )}
+          <button
+            onClick={() => setShowPastPicker(p => !p)}
+            className="btn btn-secondary btn-sm"
+            style={{ fontSize: "0.78rem" }}
+          >
+            📅 Edit a Past Day
+          </button>
+        </div>
+
+        {/* Past day date picker */}
+        {showPastPicker && (
+          <div className="card" style={{ marginTop: 12, padding: "14px 16px", animation: "slideDown 0.25s ease", border: "1px solid rgba(245,158,11,0.3)", background: "rgba(245,158,11,0.05)" }}>
+            <p style={{ fontSize: "0.82rem", fontWeight: 600, marginBottom: 10, color: "#f59e0b" }}>
+              Select a past weekday to edit
+            </p>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                type="date"
+                className="input"
+                value={pastDateInput}
+                max={new Date(new Date(todayStr).getTime() - 86400000).toISOString().split("T")[0]}
+                min={sessionStartDate || undefined}
+                onChange={e => setPastDateInput(e.target.value)}
+                style={{ flex: 1, fontSize: "0.88rem" }}
+              />
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={handleGoToPastDate}
+                disabled={!pastDateInput}
+                style={{ whiteSpace: "nowrap" }}
+              >
+                Go →
+              </button>
+            </div>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: 8 }}>
+              Only Mon–Fri dates from your session start date are allowed.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Before Session Start Banner */}
@@ -164,14 +264,14 @@ export default function DashboardPage() {
       {saveSuccess && (
         <div className="alert alert-success" style={{ marginBottom: 16, animation: "slideDown 0.3s ease" }}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ animation: "checkBounce 0.4s ease" }}><polyline points="20 6 9 17 4 12"/></svg>
-          Attendance saved! ✨
+          Attendance saved! Stats updated instantly ✨
         </div>
       )}
 
       {/* Already submitted banner */}
       {submitted && !editMode && !saveSuccess && !isBeforeSessionStart && (
         <div className="alert alert-info" style={{ marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span>✅ Attendance logged for today</span>
+          <span>✅ Attendance logged for {isToday ? "today" : "this day"}</span>
           <button style={{ background: "rgba(255,255,255,0.1)", color: "inherit", border: "none", borderRadius: 8, padding: "4px 10px", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600 }} onClick={() => setEditMode(true)}>Edit</button>
         </div>
       )}
@@ -180,8 +280,8 @@ export default function DashboardPage() {
       {scheduledSlots.length === 0 && !isBeforeSessionStart && (
         <div className="card" style={{ textAlign: "center", padding: "48px 20px" }}>
           <div style={{ fontSize: 52, marginBottom: 12 }}>🎉</div>
-          <h2 style={{ marginBottom: 6 }}>No Classes Today!</h2>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Enjoy your free day. Your attendance won't be affected.</p>
+          <h2 style={{ marginBottom: 6 }}>No Classes {isToday ? "Today" : "on This Day"}!</h2>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Enjoy your free day. Your attendance won&apos;t be affected.</p>
         </div>
       )}
 
@@ -203,7 +303,7 @@ export default function DashboardPage() {
               <div>
                 <p style={{ fontWeight: 700, fontSize: "0.95rem" }}>Mark as Holiday</p>
                 <p style={{ color: isHoliday ? "rgba(245,158,11,0.7)" : "var(--text-muted)", fontSize: "0.75rem" }}>
-                  {isHoliday ? "All classes skipped from calculation" : "College closed? Toggle to skip today"}
+                  {isHoliday ? "All classes skipped from calculation" : "College closed? Toggle to skip this day"}
                 </p>
               </div>
             </div>
@@ -250,9 +350,9 @@ export default function DashboardPage() {
                   </span>
                 </div>
 
-                {/* Classes held section */}
+                {/* Classes held */}
                 <div style={{ marginBottom: 14 }}>
-                  <p className="section-label" style={{ marginBottom: 8 }}>Classes held today</p>
+                  <p className="section-label" style={{ marginBottom: 8 }}>Classes held</p>
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     <div className="stepper">
                       <button className="stepper-btn"
@@ -284,7 +384,7 @@ export default function DashboardPage() {
                 {/* Teacher absent notice */}
                 {entry.isTeacherAbsent && (
                   <div style={{ padding: "9px 12px", borderRadius: "var(--radius-sm)", background: "rgba(239,68,68,0.07)", color: "var(--danger)", fontSize: "0.78rem", fontWeight: 500 }}>
-                    This class won't count towards your total — you&apos;re safe! 👍
+                    This class won&apos;t count towards your total — you&apos;re safe! 👍
                   </div>
                 )}
 
@@ -315,7 +415,7 @@ export default function DashboardPage() {
         <button className="btn btn-primary btn-full btn-lg" style={{ marginTop: 8 }} onClick={handleSubmit} disabled={submitting}>
           {submitting ? (
             <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ animation: "spin 0.8s linear infinite" }}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Saving...</>
-          ) : "✓ Save Today's Attendance"}
+          ) : isToday ? "✓ Save Today's Attendance" : "✓ Save Attendance for This Day"}
         </button>
       )}
     </div>
