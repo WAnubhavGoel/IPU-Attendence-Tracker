@@ -3,20 +3,27 @@ import { getAuthenticatedUserId } from "@/lib/get-user-id";
 import { prisma } from "@/lib/prisma";
 import { ClassType } from "@prisma/client";
 
+// ── Pure math helpers ──────────────────────────────────────────────────────
+
 function calcMetrics(totalHeld: number, totalAttended: number) {
   const pct = totalHeld > 0 ? (totalAttended / totalHeld) * 100 : 100;
   const percentage = Math.round(pct * 10) / 10;
-  const bunkMargin = percentage >= 50 ? Math.max(0, Math.floor(2 * totalAttended - totalHeld)) : 0;
-  const recoveryCount = percentage < 50 ? Math.max(0, Math.ceil(totalHeld - 2 * totalAttended)) : 0;
-  const status: "SAFE" | "WARNING" | "CRITICAL" = pct < 50 ? "CRITICAL" : pct < 60 ? "WARNING" : "SAFE";
+  const bunkMargin =
+    percentage >= 50 ? Math.max(0, Math.floor(2 * totalAttended - totalHeld)) : 0;
+  const recoveryCount =
+    percentage < 50 ? Math.max(0, Math.ceil(totalHeld - 2 * totalAttended)) : 0;
+  const status: "SAFE" | "WARNING" | "CRITICAL" =
+    pct < 50 ? "CRITICAL" : pct < 60 ? "WARNING" : "SAFE";
   return { percentage, bunkMargin, recoveryCount, status };
 }
 
-const r = (n: number, d: number) => d > 0 ? Math.round((n / d) * 1000) / 10 : 100;
+const r = (n: number, d: number) =>
+  d > 0 ? Math.round((n / d) * 1000) / 10 : 100;
 
-// Get IST date string (YYYY-MM-DD) for any UTC Date
+// ── IST helpers ────────────────────────────────────────────────────────────
+
+/** Convert any UTC Date → "YYYY-MM-DD" string in IST */
 function toISTDateStr(date: Date): string {
-  // IST = UTC + 5:30
   const ist = new Date(date.getTime() + (5 * 60 + 30) * 60 * 1000);
   const y = ist.getUTCFullYear();
   const m = String(ist.getUTCMonth() + 1).padStart(2, "0");
@@ -24,127 +31,159 @@ function toISTDateStr(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
-// Get current IST hour (0-23)
+/** Current IST hour (0-23) */
 function getISTHour(): number {
-  const now = new Date();
-  const ist = new Date(now.getTime() + (5 * 60 + 30) * 60 * 1000);
-  return ist.getUTCHours();
+  return new Date(new Date().getTime() + (5 * 60 + 30) * 60 * 1000).getUTCHours();
 }
 
-// Returns all weekdays (Mon-Fri) between startDate and yesterday (inclusive)
-// that are eligible for auto-penalty (i.e., we only penalise fully past days)
-function getPastWeekdays(startDateStr: string, todayStr: string): string[] {
-  const days: string[] = [];
-  const current = new Date(startDateStr + "T00:00:00Z");
-  const today = new Date(todayStr + "T00:00:00Z");
-
-  while (current < today) {
-    // getUTCDay: 0=Sun, 1=Mon ... 5=Fri, 6=Sat
-    const dow = current.getUTCDay();
-    if (dow >= 1 && dow <= 5) {
-      const y = current.getUTCFullYear();
-      const m = String(current.getUTCMonth() + 1).padStart(2, "0");
-      const d = String(current.getUTCDate()).padStart(2, "0");
-      days.push(`${y}-${m}-${d}`);
-    }
-    current.setUTCDate(current.getUTCDate() + 1);
-  }
-
-  // Also include today if IST hour >= 19 (7 PM) and today is a weekday
-  const todayDow = today.getUTCDay();
-  if (todayDow >= 1 && todayDow <= 5 && getISTHour() >= 19) {
-    days.push(todayStr);
-  }
-
-  return days;
-}
-
-const DAY_MAP: Record<number, string> = {
-  1: "MONDAY", 2: "TUESDAY", 3: "WEDNESDAY",
-  4: "THURSDAY", 5: "FRIDAY",
+/** 0=Sun,1=Mon..6=Sat → "MONDAY" etc., or null for weekend */
+const DOW_NAME: Record<number, string> = {
+  1: "MONDAY", 2: "TUESDAY", 3: "WEDNESDAY", 4: "THURSDAY", 5: "FRIDAY",
 };
+
+/** Parse "YYYY-MM-DD" to a UTC midnight Date (avoids local-tz shift) */
+function parseDate(dateStr: string): Date {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
+/** Advance a "YYYY-MM-DD" string by one day */
+function nextDay(dateStr: string): string {
+  const d = parseDate(dateStr);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return toISTDateStr(d);
+}
+
+// ── Main GET handler ───────────────────────────────────────────────────────
 
 export async function GET() {
   try {
     const userId = await getAuthenticatedUserId();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!userId)
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { sessionStartDate: true },
     });
 
-    // Fetch saved subject stats from DB (from days the user DID log)
-    const stats = await prisma.subjectStat.findMany({
-      where: { userId },
-      orderBy: [{ subjectName: "asc" }],
-    });
-
-    // Build a mutable aggregation map starting from saved stats
-    const agg: Record<string, { subjectName: string; type: ClassType; totalHeld: number; totalAttended: number }> = {};
-    for (const stat of stats) {
-      const key = `${stat.subjectName}|||${stat.type}`;
-      agg[key] = {
-        subjectName: stat.subjectName,
-        type: stat.type,
-        totalHeld: stat.totalHeld,
-        totalAttended: stat.totalAttended,
-      };
+    // If no session start date set, return empty analytics
+    if (!user?.sessionStartDate) {
+      return NextResponse.json({
+        sessionStartDate: null,
+        overview: {
+          overallPercentage: 100, theoryPercentage: 100, labPercentage: 100,
+          totalHeld: 0, totalAttended: 0,
+          theoryHeld: 0, theoryAttended: 0,
+          labHeld: 0, labAttended: 0,
+          percentage: 100, bunkMargin: 0, recoveryCount: 0, status: "SAFE",
+        },
+        theory: { subjects: [], totalHeld: 0, totalAttended: 0, percentage: 100, bunkMargin: 0, recoveryCount: 0, status: "SAFE" },
+        labs:   { subjects: [], totalHeld: 0, totalAttended: 0, percentage: 100, bunkMargin: 0, recoveryCount: 0, status: "SAFE" },
+        subjects: [],
+      });
     }
 
-    // ── AUTO-PENALTY LOGIC ─────────────────────────────────────────────────
-    if (user?.sessionStartDate) {
-      const istToday = toISTDateStr(new Date());
-      const sessionStartStr = toISTDateStr(user.sessionStartDate);
+    const istToday = toISTDateStr(new Date());
+    const sessionStartStr = toISTDateStr(user.sessionStartDate);
+    const istHour = getISTHour();
 
-      const eligibleDays = getPastWeekdays(sessionStartStr, istToday);
+    // Fetch all timetable slots once (indexed by dayOfWeek)
+    const allSlots = await prisma.timetableSlot.findMany({ where: { userId } });
+    const slotsByDay: Record<string, typeof allSlots> = {};
+    for (const slot of allSlots) {
+      if (!slotsByDay[slot.dayOfWeek]) slotsByDay[slot.dayOfWeek] = [];
+      slotsByDay[slot.dayOfWeek].push(slot);
+    }
 
-      if (eligibleDays.length > 0) {
-        // Fetch all dates that the user HAS logged attendance for
-        const loggedDates = await prisma.attendanceLog.findMany({
-          where: { userId },
-          select: { date: true },
-          distinct: ["date"],
-        });
-        const loggedDateSet = new Set(loggedDates.map(l => toISTDateStr(l.date)));
+    // Fetch all attendance logs from session start date, indexed by "YYYY-MM-DD|||subjectName|||type"
+    const allLogs = await prisma.attendanceLog.findMany({
+      where: { userId, date: { gte: user.sessionStartDate } },
+    });
+    const logMap: Record<string, { heldCount: number; attendedCount: number }> = {};
+    const loggedDateSet = new Set<string>();
+    for (const log of allLogs) {
+      const dateStr = toISTDateStr(log.date);
+      loggedDateSet.add(dateStr);
+      const key = `${dateStr}|||${log.subjectName}|||${log.type}`;
+      logMap[key] = { heldCount: log.heldCount, attendedCount: log.attendedCount };
+    }
 
-        // Fetch all timetable slots once
-        const allSlots = await prisma.timetableSlot.findMany({ where: { userId } });
+    // Per-subject accumulator: key = "subjectName|||type"
+    const agg: Record<string, { subjectName: string; type: ClassType; totalHeld: number; totalAttended: number }> = {};
 
-        for (const dateStr of eligibleDays) {
-          // Skip if user already logged this day (real data wins)
-          if (loggedDateSet.has(dateStr)) continue;
+    // ── Day-by-day loop from sessionStartDate to today (inclusive if past 7 PM) ──
+    let cursor = sessionStartStr;
+    while (cursor <= istToday) {
+      const dateObj = parseDate(cursor);
+      const dow = dateObj.getUTCDay(); // 0=Sun .. 6=Sat
+      const dayName = DOW_NAME[dow];   // undefined for Sat/Sun
 
-          // Get day of week for this date
-          const dateParts = dateStr.split("-").map(Number);
-          const dateObj = new Date(Date.UTC(dateParts[0], dateParts[1] - 1, dateParts[2]));
-          const dow = dateObj.getUTCDay(); // 1=Mon..5=Fri
-          const dayName = DAY_MAP[dow];
-          if (!dayName) continue;
+      const isWeekday = Boolean(dayName);
+      const isToday = cursor === istToday;
+      const isPast = cursor < istToday;
 
-          // Get timetable slots for that day
-          const daySlots = allSlots.filter(s => s.dayOfWeek === dayName);
-          if (daySlots.length === 0) continue;
+      // Only process weekdays
+      if (isWeekday) {
+        const slotsForDay = slotsByDay[dayName] || [];
 
-          // Add penalty: all classes held, 0 attended
-          for (const slot of daySlots) {
-            const key = `${slot.subjectName}|||${slot.type}`;
-            if (!agg[key]) {
-              agg[key] = { subjectName: slot.subjectName, type: slot.type, totalHeld: 0, totalAttended: 0 };
+        if (slotsForDay.length > 0) {
+          const dayIsLogged = loggedDateSet.has(cursor);
+
+          // Determine if this day should contribute to stats:
+          // - Past days: always included (either logged or penalty)
+          // - Today: only included if past 7 PM IST
+          const shouldCount = isPast || (isToday && istHour >= 19);
+
+          if (shouldCount) {
+            for (const slot of slotsForDay) {
+              const aggKey = `${slot.subjectName}|||${slot.type}`;
+              if (!agg[aggKey]) {
+                agg[aggKey] = {
+                  subjectName: slot.subjectName,
+                  type: slot.type,
+                  totalHeld: 0,
+                  totalAttended: 0,
+                };
+              }
+
+              if (dayIsLogged) {
+                // Use real logged data for this subject on this day
+                const logKey = `${cursor}|||${slot.subjectName}|||${slot.type}`;
+                const log = logMap[logKey];
+                if (log) {
+                  // Real data: heldCount + attendedCount from log
+                  agg[aggKey].totalHeld += log.heldCount;
+                  agg[aggKey].totalAttended += log.attendedCount;
+                }
+                // If no log entry for this specific subject on a logged day
+                // (e.g. holiday — all entries deleted), heldCount = 0, skip
+              } else {
+                // Auto-penalty: day not logged → all scheduled held, 0 attended
+                agg[aggKey].totalHeld += slot.count;
+                // attendedCount stays 0
+              }
             }
-            agg[key].totalHeld += slot.count;
-            // totalAttended stays 0 — full penalty
           }
         }
       }
+
+      // Advance to next day
+      if (cursor === istToday) break;
+      cursor = nextDay(cursor);
     }
-    // ── END AUTO-PENALTY ───────────────────────────────────────────────────
 
+    // ── Build response ──────────────────────────────────────────────────────
     let theoryHeld = 0, theoryAttended = 0, labHeld = 0, labAttended = 0;
-    const theorySubjects = [];
-    const labSubjects = [];
+    const theorySubjects: object[] = [];
+    const labSubjects: object[] = [];
 
-    for (const stat of Object.values(agg)) {
+    // Sort subjects alphabetically for consistent ordering
+    const sortedSubjects = Object.values(agg).sort((a, b) =>
+      a.subjectName.localeCompare(b.subjectName)
+    );
+
+    for (const stat of sortedSubjects) {
       const metrics = calcMetrics(stat.totalHeld, stat.totalAttended);
       const item = {
         subjectName: stat.subjectName,
@@ -169,12 +208,8 @@ export async function GET() {
     const totalAttended = theoryAttended + labAttended;
     const overallMetrics = calcMetrics(totalHeld, totalAttended);
 
-    const sessionStartDateStr = user?.sessionStartDate
-      ? toISTDateStr(user.sessionStartDate)
-      : null;
-
     return NextResponse.json({
-      sessionStartDate: sessionStartDateStr,
+      sessionStartDate: sessionStartStr,
       overview: {
         overallPercentage: r(totalAttended, totalHeld),
         theoryPercentage: r(theoryAttended, theoryHeld),
@@ -200,6 +235,9 @@ export async function GET() {
     });
   } catch (error) {
     console.error("[GET /api/analytics]", error);
-    return NextResponse.json({ error: "Failed to fetch analytics" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to fetch analytics" },
+      { status: 500 }
+    );
   }
 }

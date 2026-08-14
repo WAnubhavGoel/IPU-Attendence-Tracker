@@ -83,13 +83,37 @@ export async function POST(req: Request) {
     if (user?.sessionStartDate) {
       const startStr = user.sessionStartDate.toISOString().split("T")[0];
       if (dateStr < startStr) {
-        return NextResponse.json({ error: `Cannot log attendance before session start date (${startStr})` }, { status: 400 });
+        return NextResponse.json(
+          { error: `Cannot log attendance before session start date (${startStr})` },
+          { status: 400 }
+        );
       }
     }
 
+    // Holiday: upsert sentinel rows (heldCount=0, attendedCount=0) for every timetable slot
+    // on that day. This marks the date as "logged" in loggedDateSet so analytics does NOT
+    // apply the 7PM auto-penalty. Since heldCount=0, the day contributes 0 to all totals.
     if (isFullDayHoliday) {
-      const deleted = await prisma.attendanceLog.deleteMany({ where: { userId, date: targetDate } });
-      if (deleted.count > 0) await recomputeSubjectStats(userId);
+      const dayOfWeek = getDayOfWeekFromDateStr(dateStr);
+      const daySlots = await prisma.timetableSlot.findMany({
+        where: { userId, dayOfWeek },
+      });
+
+      if (daySlots.length > 0) {
+        for (const slot of daySlots) {
+          const type: ClassType = slot.type;
+          await prisma.attendanceLog.upsert({
+            where: { userId_date_subjectName_type: { userId, date: targetDate, subjectName: slot.subjectName, type } },
+            update: { scheduledCount: slot.count, heldCount: 0, attendedCount: 0, isTeacherAbsent: false },
+            create: { userId, date: targetDate, subjectName: slot.subjectName, type, scheduledCount: slot.count, heldCount: 0, attendedCount: 0, isTeacherAbsent: false },
+          });
+        }
+      } else {
+        // No timetable slots for this day (e.g. manually chosen holiday on a no-class day)
+        // Nothing to write — day stays absent from loggedDateSet which is fine since
+        // there are no timetable slots to penalise anyway.
+      }
+
       return NextResponse.json({ message: "Day marked as holiday. No classes counted.", isHoliday: true });
     }
 
@@ -97,11 +121,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "logs array is required" }, { status: 400 });
     }
 
+    // Upsert each subject's attendance log for this date
     for (const log of logs) {
       const type: ClassType = log.type === "LAB" ? ClassType.LAB : ClassType.LECTURE;
       const isTeacherAbsent = Boolean(log.isTeacherAbsent);
       const finalHeldCount = isTeacherAbsent ? 0 : Math.max(0, Number(log.heldCount));
-      const finalAttendedCount = isTeacherAbsent ? 0 : Math.min(finalHeldCount, Math.max(0, Number(log.attendedCount)));
+      const finalAttendedCount = isTeacherAbsent
+        ? 0
+        : Math.min(finalHeldCount, Math.max(0, Number(log.attendedCount)));
 
       await prisma.attendanceLog.upsert({
         where: { userId_date_subjectName_type: { userId, date: targetDate, subjectName: log.subjectName, type } },
@@ -110,47 +137,10 @@ export async function POST(req: Request) {
       });
     }
 
-    await recomputeSubjectStats(userId);
+    // No recomputeSubjectStats needed — analytics calculates fresh from AttendanceLog directly
     return NextResponse.json({ message: "Attendance saved successfully" });
   } catch (error) {
     console.error("[POST /api/attendance]", error);
     return NextResponse.json({ error: "Failed to save attendance" }, { status: 500 });
-  }
-}
-
-async function recomputeSubjectStats(userId: string) {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { sessionStartDate: true },
-  });
-
-  const whereClause: { userId: string; date?: { gte: Date } } = { userId };
-  if (user?.sessionStartDate) {
-    whereClause.date = { gte: user.sessionStartDate };
-  }
-
-  const allLogs = await prisma.attendanceLog.findMany({ where: whereClause });
-  const agg: Record<string, { subjectName: string; type: ClassType; totalHeld: number; totalAttended: number }> = {};
-
-  for (const log of allLogs) {
-    const key = `${log.subjectName}|||${log.type}`;
-    if (!agg[key]) agg[key] = { subjectName: log.subjectName, type: log.type, totalHeld: 0, totalAttended: 0 };
-    agg[key].totalHeld += log.heldCount;
-    agg[key].totalAttended += log.attendedCount;
-  }
-
-  for (const stat of Object.values(agg)) {
-    await prisma.subjectStat.upsert({
-      where: { userId_subjectName_type: { userId, subjectName: stat.subjectName, type: stat.type } },
-      update: { totalHeld: stat.totalHeld, totalAttended: stat.totalAttended },
-      create: { userId, subjectName: stat.subjectName, type: stat.type, totalHeld: stat.totalHeld, totalAttended: stat.totalAttended },
-    });
-  }
-
-  const validKeys = new Set(Object.values(agg).map((s) => `${s.subjectName}|||${s.type}`));
-  const allStats = await prisma.subjectStat.findMany({ where: { userId } });
-  const toDelete = allStats.filter((s) => !validKeys.has(`${s.subjectName}|||${s.type}`));
-  if (toDelete.length > 0) {
-    await prisma.subjectStat.deleteMany({ where: { id: { in: toDelete.map((s) => s.id) } } });
   }
 }
