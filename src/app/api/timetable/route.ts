@@ -63,6 +63,25 @@ export async function POST(req: Request) {
 
     const startDateObj = sessionStartDate ? new Date(sessionStartDate) : new Date();
 
+    // Step 1: Get old timetable subjects before deleting them
+    const oldSlots = await prisma.timetableSlot.findMany({
+      where: { userId },
+      select: { subjectName: true, type: true },
+    });
+
+    // Step 2: Build a set of new subject+type keys from the incoming timetable
+    const newSubjectKeys = new Set(
+      slots.map((s: { subjectName: string; type: ClassType }) =>
+        `${s.subjectName.trim()}|||${s.type}`
+      )
+    );
+
+    // Step 3: Find subjects that exist in old timetable but NOT in new timetable
+    const removedSubjects = oldSlots.filter(
+      (s) => !newSubjectKeys.has(`${s.subjectName}|||${s.type}`)
+    );
+
+    // Step 4: Save new timetable (delete old slots, create new ones)
     await prisma.$transaction([
       prisma.user.update({
         where: { id: userId },
@@ -79,6 +98,17 @@ export async function POST(req: Request) {
         })),
       }),
     ]);
+
+    // Step 5: Delete AttendanceLog + SubjectStat rows for removed subjects
+    // so they never appear in analytics or dashboard again
+    for (const removed of removedSubjects) {
+      await prisma.attendanceLog.deleteMany({
+        where: { userId, subjectName: removed.subjectName, type: removed.type },
+      });
+      await prisma.subjectStat.deleteMany({
+        where: { userId, subjectName: removed.subjectName, type: removed.type },
+      });
+    }
 
     const saved = await prisma.timetableSlot.findMany({
       where: { userId },
@@ -98,6 +128,7 @@ export async function POST(req: Request) {
       sessionStartDate: startDateObj.toISOString().split("T")[0],
       slots: saved,
       grouped,
+      removedSubjects: removedSubjects.length,
     });
   } catch (error) {
     console.error("[POST /api/timetable]", error);
