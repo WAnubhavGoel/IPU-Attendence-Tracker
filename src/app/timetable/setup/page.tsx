@@ -28,7 +28,10 @@ export default function TimetablePage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<1 | 2>(1);
   const [slots, setSlots] = useState<SlotInput[]>([]);
+  const [originalSlots, setOriginalSlots] = useState<SlotInput[]>([]);
   const [sessionStartDate, setSessionStartDate] = useState(getTodayDateStr());
+  const [originalStartDate, setOriginalStartDate] = useState(getTodayDateStr());
+  const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
@@ -43,10 +46,14 @@ export default function TimetablePage() {
       .then(data => {
         if (data.sessionStartDate) {
           setSessionStartDate(data.sessionStartDate);
+          setOriginalStartDate(data.sessionStartDate);
         }
         if (data.hasTimetable && data.slots?.length > 0) {
           setHasTimetable(true);
-          setSlots(data.slots.map((s: Omit<SlotInput, "tempId">) => ({ ...s, tempId: nid() })));
+          const mapped = data.slots.map((s: Omit<SlotInput, "tempId">) => ({ ...s, tempId: nid() }));
+          setSlots(mapped);
+          setOriginalSlots(mapped);
+          setIsEditing(false);
           setStep(2);
         }
       })
@@ -63,7 +70,9 @@ export default function TimetablePage() {
       const res = await fetch("/api/timetable/ocr", { method: "POST", body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "OCR failed");
-      setSlots((data.slots || []).map((s: Omit<SlotInput, "tempId">) => ({ ...s, tempId: nid() })));
+      const mapped = (data.slots || []).map((s: Omit<SlotInput, "tempId">) => ({ ...s, tempId: nid() }));
+      setSlots(mapped);
+      setIsEditing(true);
       if (data.notice) setNotice(data.notice);
       setStep(2);
     } catch (err: unknown) {
@@ -76,16 +85,36 @@ export default function TimetablePage() {
   const handleDelete = async () => {
     if (!confirm("Delete your entire timetable and all attendance data? This cannot be undone.")) return;
     await fetch("/api/timetable", { method: "DELETE" });
-    setSlots([]); setHasTimetable(false); setStep(1);
+    setSlots([]); setOriginalSlots([]); setHasTimetable(false); setIsEditing(false); setStep(1);
   };
 
-  const addSlot = (day: Day) =>
+  const startEditing = () => {
+    setOriginalSlots(JSON.parse(JSON.stringify(slots)));
+    setOriginalStartDate(sessionStartDate);
+    setIsEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setSlots(JSON.parse(JSON.stringify(originalSlots)));
+    setSessionStartDate(originalStartDate);
+    setIsEditing(false);
+    setError("");
+  };
+
+  const addSlot = (day: Day) => {
+    if (!isEditing && hasTimetable) return;
     setSlots(p => [...p, { tempId: nid(), dayOfWeek: day, subjectName: "", type: "LECTURE", count: 1 }]);
+  };
 
-  const upd = (tempId: string, field: keyof SlotInput, val: string | number) =>
+  const upd = (tempId: string, field: keyof SlotInput, val: string | number) => {
+    if (!isEditing && hasTimetable) return;
     setSlots(p => p.map(s => s.tempId === tempId ? { ...s, [field]: val } : s));
+  };
 
-  const rm = (tempId: string) => setSlots(p => p.filter(s => s.tempId !== tempId));
+  const rm = (tempId: string) => {
+    if (!isEditing && hasTimetable) return;
+    setSlots(p => p.filter(s => s.tempId !== tempId));
+  };
 
   const save = async () => {
     const valid = slots.filter(s => s.subjectName.trim());
@@ -222,6 +251,19 @@ export default function TimetablePage() {
         <div className="anim-fade-up">
           {notice && <div className="alert alert-warning" style={{ marginBottom: 16 }}>{notice}</div>}
 
+          {/* EDIT MODE ACTIVE BANNER */}
+          {hasTimetable && isEditing && (
+            <div className="alert alert-info" style={{ marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span>✏️ <strong>Editing Timetable</strong> — Make your changes and click Save Changes below.</span>
+              <button
+                onClick={cancelEditing}
+                style={{ background: "rgba(255,255,255,0.15)", color: "inherit", border: "none", borderRadius: 8, padding: "4px 10px", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600 }}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
           {/* SESSION / CLASSES START DATE CARD */}
           <div className="card card-sm" style={{ marginBottom: 20, background: "rgba(99,102,241,0.06)", borderColor: "rgba(99,102,241,0.25)" }}>
             <label className="input-label" style={{ color: "var(--accent-1)", fontWeight: 700, fontSize: "0.85rem", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
@@ -232,8 +274,13 @@ export default function TimetablePage() {
               className="input"
               value={sessionStartDate}
               onChange={e => setSessionStartDate(e.target.value)}
+              disabled={hasTimetable && !isEditing}
               required
-              style={{ fontWeight: 600, fontSize: "0.92rem", background: "rgba(0,0,0,0.3)" }}
+              style={{
+                fontWeight: 600, fontSize: "0.92rem", background: "rgba(0,0,0,0.3)",
+                opacity: hasTimetable && !isEditing ? 0.7 : 1,
+                cursor: hasTimetable && !isEditing ? "not-allowed" : "auto",
+              }}
             />
             <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: 6 }}>
               Attendance tracking and stats calculation will strictly start from this date.
@@ -242,6 +289,8 @@ export default function TimetablePage() {
 
           {DAYS.map(day => {
             const ds = byDay[day];
+            const canEdit = !hasTimetable || isEditing;
+
             return (
               <div key={day} style={{ marginBottom: 22 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
@@ -254,10 +303,12 @@ export default function TimetablePage() {
                     <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>{dayLabel(day)}</span>
                     {ds.length > 0 && <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>{ds.length} slot{ds.length > 1 ? "s" : ""}</span>}
                   </div>
-                  <button className="btn btn-secondary btn-sm" style={{ gap: 4, padding: "5px 10px" }} onClick={() => addSlot(day)}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    Add
-                  </button>
+                  {canEdit && (
+                    <button className="btn btn-secondary btn-sm" style={{ gap: 4, padding: "5px 10px" }} onClick={() => addSlot(day)}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                      Add
+                    </button>
+                  )}
                 </div>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -271,35 +322,45 @@ export default function TimetablePage() {
                     </div>
                   )}
                   {ds.map(slot => (
-                    <div key={slot.tempId} className="card card-sm">
+                    <div key={slot.tempId} className="card card-sm" style={{ opacity: canEdit ? 1 : 0.9 }}>
                       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                         <input
                           className="input"
                           placeholder="Subject name"
                           value={slot.subjectName}
+                          disabled={!canEdit}
                           onChange={e => upd(slot.tempId, "subjectName", e.target.value)}
-                          style={{ flex: 1, fontSize: "0.88rem", padding: "9px 12px" }}
-                        />
-                        <button
-                          onClick={() => rm(slot.tempId)}
                           style={{
-                            flexShrink: 0, width: 36, height: 36,
-                            display: "flex", alignItems: "center", justifyContent: "center",
-                            background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)",
-                            borderRadius: "var(--radius-sm)", color: "var(--danger)",
-                            cursor: "pointer", transition: "all var(--transition)",
+                            flex: 1, fontSize: "0.88rem", padding: "9px 12px",
+                            cursor: !canEdit ? "default" : "text",
+                            background: !canEdit ? "rgba(255,255,255,0.03)" : undefined,
                           }}
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-                        </button>
+                        />
+                        {canEdit && (
+                          <button
+                            onClick={() => rm(slot.tempId)}
+                            style={{
+                              flexShrink: 0, width: 36, height: 36,
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                              background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)",
+                              borderRadius: "var(--radius-sm)", color: "var(--danger)",
+                              cursor: "pointer", transition: "all var(--transition)",
+                            }}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                          </button>
+                        )}
                       </div>
 
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                         {(["LECTURE", "LAB"] as const).map(t => (
-                          <button key={t} onClick={() => upd(slot.tempId, "type", t)}
+                          <button
+                            key={t}
+                            disabled={!canEdit}
+                            onClick={() => canEdit && upd(slot.tempId, "type", t)}
                             style={{
                               padding: "5px 12px", borderRadius: 100, fontSize: "0.75rem", fontWeight: 600,
-                              cursor: "pointer", border: "1px solid", transition: "all var(--transition)",
+                              cursor: canEdit ? "pointer" : "default", border: "1px solid", transition: "all var(--transition)",
                               background: slot.type === t ? (t === "LECTURE" ? "rgba(99,102,241,0.2)" : "rgba(168,85,247,0.2)") : "transparent",
                               borderColor: slot.type === t ? (t === "LECTURE" ? "rgba(99,102,241,0.5)" : "rgba(168,85,247,0.5)") : "var(--border)",
                               color: slot.type === t ? (t === "LECTURE" ? "#818cf8" : "#c084fc") : "var(--text-muted)",
@@ -309,11 +370,20 @@ export default function TimetablePage() {
                         ))}
                         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
                           <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Count</span>
-                          <div className="stepper">
-                            <button className="stepper-btn" onClick={() => upd(slot.tempId, "count", Math.max(1, slot.count - 1))} disabled={slot.count <= 1}>−</button>
-                            <span className="stepper-value">{slot.count}</span>
-                            <button className="stepper-btn" onClick={() => upd(slot.tempId, "count", Math.min(6, slot.count + 1))} disabled={slot.count >= 6}>+</button>
-                          </div>
+                          {canEdit ? (
+                            <div className="stepper">
+                              <button className="stepper-btn" onClick={() => upd(slot.tempId, "count", Math.max(1, slot.count - 1))} disabled={slot.count <= 1}>−</button>
+                              <span className="stepper-value">{slot.count}</span>
+                              <button className="stepper-btn" onClick={() => upd(slot.tempId, "count", Math.min(6, slot.count + 1))} disabled={slot.count >= 6}>+</button>
+                            </div>
+                          ) : (
+                            <span style={{
+                              background: "rgba(255,255,255,0.06)", padding: "4px 10px", borderRadius: "var(--radius-sm)",
+                              fontSize: "0.85rem", fontWeight: 700, color: "var(--text-primary)"
+                            }}>
+                              {slot.count}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -324,14 +394,38 @@ export default function TimetablePage() {
           })}
 
           <div style={{ display: "flex", gap: 10, marginTop: 4, paddingBottom: 8 }}>
-            <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => { setStep(1); setNotice(""); }}>
-              ← Rescan
-            </button>
-            <button className="btn btn-primary" style={{ flex: 2 }} onClick={save} disabled={saving}>
-              {saving ? (
-                <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ animation: "spin 0.8s linear infinite" }}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Saving...</>
-              ) : hasTimetable ? "Edit Timetable →" : "Save Timetable →"}
-            </button>
+            {hasTimetable && !isEditing ? (
+              <>
+                <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => { setStep(1); setNotice(""); }}>
+                  ← Rescan / Replace
+                </button>
+                <button className="btn btn-primary" style={{ flex: 2 }} onClick={startEditing}>
+                  ✏️ Edit Timetable
+                </button>
+              </>
+            ) : hasTimetable && isEditing ? (
+              <>
+                <button className="btn btn-secondary" style={{ flex: 1 }} onClick={cancelEditing}>
+                  Cancel
+                </button>
+                <button className="btn btn-primary" style={{ flex: 2 }} onClick={save} disabled={saving}>
+                  {saving ? (
+                    <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ animation: "spin 0.8s linear infinite" }}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Saving...</>
+                  ) : "Save Changes →"}
+                </button>
+              </>
+            ) : (
+              <>
+                <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => { setStep(1); setNotice(""); }}>
+                  ← Rescan
+                </button>
+                <button className="btn btn-primary" style={{ flex: 2 }} onClick={save} disabled={saving}>
+                  {saving ? (
+                    <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ animation: "spin 0.8s linear infinite" }}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Saving...</>
+                  ) : "Save Timetable →"}
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
