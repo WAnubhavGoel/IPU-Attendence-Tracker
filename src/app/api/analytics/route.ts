@@ -31,7 +31,7 @@ function getISTHour(): number {
   return ist.getUTCHours();
 }
 
-// Returns all weekdays (Mon-Fri) between startDate and yesterday (inclusive)
+// Returns all days (Mon-Sat) between startDate and yesterday (inclusive)
 // that are eligible for auto-penalty (i.e., we only penalise fully past days)
 function getPastWeekdays(startDateStr: string, todayStr: string): string[] {
   const days: string[] = [];
@@ -41,7 +41,7 @@ function getPastWeekdays(startDateStr: string, todayStr: string): string[] {
   while (current < today) {
     // getUTCDay: 0=Sun, 1=Mon ... 5=Fri, 6=Sat
     const dow = current.getUTCDay();
-    if (dow >= 1 && dow <= 5) {
+    if (dow >= 1 && dow <= 6) {
       const y = current.getUTCFullYear();
       const m = String(current.getUTCMonth() + 1).padStart(2, "0");
       const d = String(current.getUTCDate()).padStart(2, "0");
@@ -50,9 +50,9 @@ function getPastWeekdays(startDateStr: string, todayStr: string): string[] {
     current.setUTCDate(current.getUTCDate() + 1);
   }
 
-  // Also include today if IST hour >= 19 (7 PM) and today is a weekday
+  // Also include today if IST hour >= 19 (7 PM) and today is Mon-Sat
   const todayDow = today.getUTCDay();
-  if (todayDow >= 1 && todayDow <= 5 && getISTHour() >= 19) {
+  if (todayDow >= 1 && todayDow <= 6 && getISTHour() >= 19) {
     days.push(todayStr);
   }
 
@@ -61,7 +61,7 @@ function getPastWeekdays(startDateStr: string, todayStr: string): string[] {
 
 const DAY_MAP: Record<number, string> = {
   1: "MONDAY", 2: "TUESDAY", 3: "WEDNESDAY",
-  4: "THURSDAY", 5: "FRIDAY",
+  4: "THURSDAY", 5: "FRIDAY", 6: "SATURDAY",
 };
 
 export async function GET() {

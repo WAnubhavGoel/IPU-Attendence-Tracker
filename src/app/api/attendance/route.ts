@@ -50,6 +50,12 @@ export async function GET(req: Request) {
       where: { userId, date: new Date(dateStr) },
     });
 
+    const isHoliday =
+      existingLogs.length > 0 &&
+      existingLogs.every(
+        (l) => l.heldCount === 0 && l.attendedCount === 0 && !l.isTeacherAbsent
+      );
+
     return NextResponse.json({
       date: dateStr,
       dayOfWeek,
@@ -58,6 +64,7 @@ export async function GET(req: Request) {
       scheduledSlots,
       logs: existingLogs,
       alreadySubmitted: existingLogs.length > 0,
+      isHoliday,
     });
   } catch (error) {
     console.error("[GET /api/attendance]", error);
@@ -88,8 +95,44 @@ export async function POST(req: Request) {
     }
 
     if (isFullDayHoliday) {
-      const deleted = await prisma.attendanceLog.deleteMany({ where: { userId, date: targetDate } });
-      if (deleted.count > 0) await recomputeSubjectStats(userId);
+      const dayOfWeek = getDayOfWeekFromDateStr(dateStr);
+      const daySlots = await prisma.timetableSlot.findMany({
+        where: { userId, dayOfWeek },
+      });
+
+      if (daySlots.length > 0) {
+        for (const slot of daySlots) {
+          const type: ClassType = slot.type;
+          await prisma.attendanceLog.upsert({
+            where: {
+              userId_date_subjectName_type: {
+                userId,
+                date: targetDate,
+                subjectName: slot.subjectName,
+                type,
+              },
+            },
+            update: {
+              scheduledCount: slot.count,
+              heldCount: 0,
+              attendedCount: 0,
+              isTeacherAbsent: false,
+            },
+            create: {
+              userId,
+              date: targetDate,
+              subjectName: slot.subjectName,
+              type,
+              scheduledCount: slot.count,
+              heldCount: 0,
+              attendedCount: 0,
+              isTeacherAbsent: false,
+            },
+          });
+        }
+      }
+
+      await recomputeSubjectStats(userId);
       return NextResponse.json({ message: "Day marked as holiday. No classes counted.", isHoliday: true });
     }
 

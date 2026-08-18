@@ -77,6 +77,7 @@ export default function DashboardPage() {
       });
       setFormState(init);
       if (attData.alreadySubmitted) setSubmitted(true);
+      if (attData.isHoliday) setIsHoliday(true);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
