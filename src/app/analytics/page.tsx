@@ -45,7 +45,7 @@ interface AnalyticsData {
   subjects: SubjectStat[];
 }
 
-function CircularProgress({ pct }: { pct: number }) {
+function CircularProgress({ pct, label = "Overall" }: { pct: number; label?: string }) {
   const r = 76;
   const circ = 2 * Math.PI * r;
   const clamped = Math.min(100, Math.max(0, pct));
@@ -75,7 +75,7 @@ function CircularProgress({ pct }: { pct: number }) {
         {Math.round(pct)}%
       </text>
       <text x="100" y="112" textAnchor="middle" fill="#9494b8" fontSize="13" fontWeight="600" fontFamily="Inter,sans-serif">
-        Overall
+        {label}
       </text>
       <text x="100" y="132" textAnchor="middle" fill="rgba(245,158,11,0.85)" fontSize="10" fontWeight="600" fontFamily="Inter,sans-serif">
         ↑ 50% limit
@@ -203,95 +203,88 @@ export default function AnalyticsPage() {
 
       {!isEmpty && data && (
         <>
-          {/* 1. OVERALL ATTENDANCE CARD WITH BUNK / RECOVERY MARGIN */}
+          {/* 1. THEORY / LECTURE OVERALL CARD */}
           <div className="card" style={{ textAlign: "center", marginBottom: 20, padding: "24px 20px" }}>
             <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
-              <CircularProgress pct={data.overview.overallPercentage} />
+              <CircularProgress pct={data.overview.theoryPercentage} label="Lectures" />
             </div>
             <p style={{ color: "var(--text-muted)", fontSize: "0.88rem", fontWeight: 600, marginBottom: 12 }}>
-              Overall: {data.overview.totalAttended} attended out of {data.overview.totalHeld} held ({data.overview.overallPercentage}%)
+              Lectures: {data.theory.totalAttended} attended out of {data.theory.totalHeld} held ({data.overview.theoryPercentage}%)
             </p>
 
-            {/* OVERALL BUNK MARGIN / RECOVERY COUNT BANNER */}
-            {data.overview.overallPercentage >= 50 ? (
+            {data.overview.theoryPercentage >= 50 ? (
               <div className="alert alert-success" style={{ textAlign: "center", justifyContent: "center", fontWeight: 700, fontSize: "0.88rem" }}>
-                ✅ You can safely skip {data.overview.bunkMargin} overall classes to stay above 50%
+                ✅ You can safely skip {data.theory.bunkMargin} lectures to stay above 50%
               </div>
             ) : (
               <div className="alert alert-danger" style={{ textAlign: "center", justifyContent: "center", fontWeight: 700, fontSize: "0.88rem" }}>
-                🚨 You need to attend {data.overview.recoveryCount} overall classes to reach 50%
+                🚨 You need to attend {data.theory.recoveryCount} lectures to reach 50%
               </div>
             )}
           </div>
 
-          {/* 2. THEORY / NORMAL CLASSES SECTION */}
+          {/* 2. INDIVIDUAL THEORY SUBJECT CARDS */}
           <div style={{ marginBottom: 24 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
               <h3 style={{ fontSize: "1.05rem", fontWeight: 800, color: "var(--accent-1)" }}>
-                📖 Normal / Theory Classes
+                📖 Lectures by Subject
               </h3>
               <span className={`badge badge-${data.theory.status?.toLowerCase() || "safe"}`}>
-                {data.theory.percentage}% Overall
+                {data.overview.theoryPercentage}% Overall
               </span>
             </div>
 
-            {/* Theory Group Summary Card */}
-            <div className="card card-sm" style={{ marginBottom: 12, background: "rgba(99,102,241,0.06)", borderColor: "rgba(99,102,241,0.2)" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div>
-                  <p style={{ fontWeight: 700, fontSize: "0.9rem" }}>Theory Overall Attendance</p>
-                  <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginTop: 2 }}>
-                    {data.theory.totalAttended} / {data.theory.totalHeld} total lectures attended
-                  </p>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <p style={{ fontSize: "1.2rem", fontWeight: 800, color: "var(--accent-1)" }}>{data.theory.percentage}%</p>
-                  <p style={{ fontSize: "0.72rem", color: data.theory.percentage >= 50 ? "var(--success)" : "var(--danger)", fontWeight: 600, marginTop: 2 }}>
-                    {data.theory.percentage >= 50 ? `Can skip ${data.theory.bunkMargin} lectures` : `Need ${data.theory.recoveryCount} for 50%`}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Individual Theory Subject Cards */}
             {data.theory.subjects.map(sub => (
               <SubjectCard key={`${sub.subjectName}-${sub.type}`} sub={sub} />
             ))}
+
+            {data.theory.subjects.length === 0 && (
+              <div className="card card-sm" style={{ textAlign: "center", padding: "20px", color: "var(--text-muted)" }}>
+                No lecture data yet
+              </div>
+            )}
           </div>
 
-          {/* 3. LABS SECTION */}
+          {/* 3. LAB OVERALL CARD */}
+          <div className="card" style={{ textAlign: "center", marginBottom: 20, padding: "24px 20px" }}>
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
+              <CircularProgress pct={data.overview.labPercentage} label="Labs" />
+            </div>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.88rem", fontWeight: 600, marginBottom: 12 }}>
+              Labs: {data.labs.totalAttended} attended out of {data.labs.totalHeld} held ({data.overview.labPercentage}%)
+            </p>
+
+            {data.overview.labPercentage >= 50 ? (
+              <div className="alert alert-success" style={{ textAlign: "center", justifyContent: "center", fontWeight: 700, fontSize: "0.88rem" }}>
+                ✅ You can safely skip {data.labs.bunkMargin} labs to stay above 50%
+              </div>
+            ) : (
+              <div className="alert alert-danger" style={{ textAlign: "center", justifyContent: "center", fontWeight: 700, fontSize: "0.88rem" }}>
+                🚨 You need to attend {data.labs.recoveryCount} labs to reach 50%
+              </div>
+            )}
+          </div>
+
+          {/* 4. INDIVIDUAL LAB SUBJECT CARDS */}
           <div style={{ marginBottom: 24 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
               <h3 style={{ fontSize: "1.05rem", fontWeight: 800, color: "var(--accent-2)" }}>
-                🔬 Lab Practicals
+                🔬 Labs by Subject
               </h3>
               <span className={`badge badge-${data.labs.status?.toLowerCase() || "safe"}`}>
-                {data.labs.percentage}% Overall
+                {data.overview.labPercentage}% Overall
               </span>
             </div>
 
-            {/* Labs Group Summary Card */}
-            <div className="card card-sm" style={{ marginBottom: 12, background: "rgba(168,85,247,0.06)", borderColor: "rgba(168,85,247,0.2)" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div>
-                  <p style={{ fontWeight: 700, fontSize: "0.9rem" }}>Labs Overall Attendance</p>
-                  <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginTop: 2 }}>
-                    {data.labs.totalAttended} / {data.labs.totalHeld} total lab practicals attended
-                  </p>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <p style={{ fontSize: "1.2rem", fontWeight: 800, color: "var(--accent-2)" }}>{data.labs.percentage}%</p>
-                  <p style={{ fontSize: "0.72rem", color: data.labs.percentage >= 50 ? "var(--success)" : "var(--danger)", fontWeight: 600, marginTop: 2 }}>
-                    {data.labs.percentage >= 50 ? `Can skip ${data.labs.bunkMargin} labs` : `Need ${data.labs.recoveryCount} for 50%`}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Individual Lab Subject Cards */}
             {data.labs.subjects.map(sub => (
               <SubjectCard key={`${sub.subjectName}-${sub.type}`} sub={sub} />
             ))}
+
+            {data.labs.subjects.length === 0 && (
+              <div className="card card-sm" style={{ textAlign: "center", padding: "20px", color: "var(--text-muted)" }}>
+                No lab data yet
+              </div>
+            )}
           </div>
 
           {/* 4. ACTIONS / RESET BUTTONS */}
